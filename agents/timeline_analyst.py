@@ -139,10 +139,13 @@ Importante:
     return json.loads(raw)
 
 
-def run(meta: dict) -> dict:
-    frames_index_path = JSON_DIR / "frames_index.json"
-    with open(frames_index_path, encoding="utf-8") as f:
-        frames_index = json.load(f)
+def run(meta: dict, frames_index_override: dict = None) -> dict:
+    if frames_index_override:
+        frames_index = frames_index_override
+    else:
+        frames_index_path = JSON_DIR / "frames_index.json"
+        with open(frames_index_path, encoding="utf-8") as f:
+            frames_index = json.load(f)
 
     frames = frames_index["frames"]
     software_name = meta.get("software_name", "software")
