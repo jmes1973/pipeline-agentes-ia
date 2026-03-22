@@ -1,18 +1,28 @@
 # Entorno virtual
 venv/
+.venv
+env/
 
 # Videos y frames (archivos pesados)
 data/input/
 data/frames/
 
-# JSONs generados (opcionales, puedes versionar solo los de prueba)
+# JSONs generados
 data/json/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Variables de entorno
+.env
+.envrc
 
 # Windows
 Thumbs.db
@@ -22,3 +32,4 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+.ruff_cache/
