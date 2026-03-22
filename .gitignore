@@ -1,0 +1,24 @@
+# Entorno virtual
+venv/
+
+# Videos y frames (archivos pesados)
+data/input/
+data/frames/
+
+# JSONs generados (opcionales, puedes versionar solo los de prueba)
+data/json/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
