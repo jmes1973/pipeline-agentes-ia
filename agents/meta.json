@@ -1,7 +1,0 @@
-{
-  "project_name": "mi_primer_pipeline",
-  "video_path": "data/input/1-Login.mp4",
-  "frame_interval_seconds": 5,
-  "language": "es",
-  "document_title": "Procedimiento generado automáticamente"
-}
