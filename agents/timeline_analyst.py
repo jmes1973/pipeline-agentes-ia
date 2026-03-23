@@ -2,6 +2,9 @@ import json
 import base64
 from pathlib import Path
 from datetime import datetime
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from agents import ocr_validator
 import openai
 
 DATA_DIR = Path("data")
@@ -19,47 +22,73 @@ def encode_image(image_path: str) -> str:
 
 def describe_frame(image_path: str, software_name: str, language: str = "es") -> dict:
     image_data = encode_image(image_path)
-    lang_instruction = "en Spanish" if language == "es" else "in English"
+    lang_instruction = "in Spanish" if language == "es" else "in English"
 
-    def ask(question: str) -> str:
-        response = client.chat.completions.create(
-            model="llava:latest",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_data}"
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": question
+    prompt = f"""Analyze this screenshot of {software_name} carefully.
+Respond ONLY with a JSON object {lang_instruction}, no markdown, no explanation:
+{{
+    "screen_name": "exact name of this screen or dialog (max 5 words)",
+    "visible_text": ["every button label", "every field label", "every menu item you can read"],
+    "cursor_position": "what UI element is the cursor on, or null if not visible",
+    "ui_state": "one sentence starting with a verb describing what the user is doing"
+}}
+Only include UI elements you can actually see. Do not invent elements."""
+
+    response = client.chat.completions.create(
+        model="llava:latest",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_data}"
                         }
-                    ]
-                }
-            ],
-            temperature=0,
-            max_tokens=200
-        )
-        text = response.choices[0].message.content.strip()
-        # Filtrar caracteres no latinos/ASCII básico
-        cleaned = "".join(c for c in text if ord(c) < 1000 or c in "áéíóúüñÁÉÍÓÚÜÑ¿¡")
-        return cleaned.strip() or "No determinado"
+                    },
+                    {
+                        "type": "text",
+                        "text": prompt
+                    }
+                ]
+            }
+        ],
+        temperature=0,
+        max_tokens=400
+    )
 
-    screen   = ask(f"This is {software_name}. What screen is this? Answer {lang_instruction}, max 10 words.")
-    elements = ask(f"List the visible buttons and input fields. Answer {lang_instruction}, max 30 words.")
-    cursor   = ask(f"What UI element is the cursor pointing at? Answer {lang_instruction}, max 10 words.")
-    action   = ask(f"What action is happening? Answer {lang_instruction}, max 15 words, start with a verb.")
+    raw = response.choices[0].message.content.strip()
 
-    return {
-        "screen_name":     screen,
-        "visible_text":    elements,
-        "cursor_position": cursor,
-        "ui_state":        action
-    }
+    # Limpiar markdown fences
+    if "```" in raw:
+        parts = raw.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                raw = part[4:].strip()
+                break
+            elif part.startswith("{"):
+                raw = part
+                break
+
+    # Extraer JSON por posición de llaves
+    start = raw.find("{")
+    end   = raw.rfind("}") + 1
+    if start != -1 and end > start:
+        raw = raw[start:end]
+
+    # Filtrar caracteres extraños
+    cleaned = "".join(c for c in raw if ord(c) < 1000 or c in "áéíóúüñÁÉÍÓÚÜÑ¿¡")
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {
+            "screen_name":     "No determinado",
+            "visible_text":    [],
+            "cursor_position": None,
+            "ui_state":        "No determinado"
+        }
 
 def validate_visual_analysis(frames: list, meta: dict) -> list:
     """
@@ -271,6 +300,24 @@ def run(meta: dict, frames_index_override: dict = None) -> dict:
             software_name,
             language
         )
+
+    print(f"Analizando {len(frames)} frames con llava...")
+
+    for i, frame in enumerate(frames):
+        print(f"  Frame {i+1}/{len(frames)}: {frame['frame_id']}")
+        frame["visual_analysis"] = describe_frame(
+            frame["file_path"],
+            software_name,
+            language
+        )
+
+    # Validación OCR con moondream
+    print("Validando OCR con moondream...")
+    frames = ocr_validator.run(frames, software_name)
+
+    # Validación semántica con qwen3
+    print("Validando análisis visual con qwen3...")
+    frames = validate_visual_analysis(frames, meta)
 
     # NUEVO — validación automática
     print("Validando análisis visual con qwen3...")
