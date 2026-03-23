@@ -261,7 +261,17 @@ def run_pipeline(meta_path: str = "meta.json"):
             print("Pipeline cancelado.")
             return
 
-        # captures_plan   = run_agent("capture_selector",  meta)
+        captures_plan   = run_agent("capture_selector",  meta)
+
+        # Checkpoint manual
+        approved = manual_review_checkpoint(
+            str(JSON_DIR / "captures_plan.json"),
+            "Captures Plan"
+        )
+        if not approved:
+            print("Pipeline cancelado.")
+            return
+
         # chapter_content = run_agent("role_writer",       meta)
         # qa_report       = run_agent("qa_agent",          meta)
         # docx            = run_docx_builder(meta)
@@ -277,6 +287,7 @@ def run_pipeline(meta_path: str = "meta.json"):
     print(f"  COMPLETADO en {elapsed} segundos")
     print(f"  Segmentos generados: {timeline_raw['total_segments']}")
     print(f"  Pasos de procedimiento: {procedure_steps['procedure']['total_steps']}")
+    print(f"  Capturas seleccionadas: {captures_plan['captures_plan']['total_captures']}")
     print(f"  Idioma: {meta['language_output']}")
     print(f"  Proyecto: {meta['project_name']}")
     print("="*50 + "\n")
