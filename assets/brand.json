@@ -1,0 +1,29 @@
+{
+  "colors": {
+    "primary":   "#2E56A6",
+    "secondary": "#4B86DE",
+    "gray_dark": "#6E6F72",
+    "gray_light": "#A7A9AC",
+    "white":     "#FFFFFF"
+  },
+  "fonts": {
+    "title":    "Twentieth Century",
+    "subtitle": "Montserrat",
+    "body":     "Noto Sans"
+  },
+  "font_sizes": {
+    "title_main":  28,
+    "title_h1":    20,
+    "title_h2":    16,
+    "body":        11,
+    "caption":     10,
+    "footer":       9
+  },
+  "logos": {
+    "volutracer": "assets/Logo_Volutracer_OPUS.png",
+    "academy":    "assets/Logo_OPUS_Academy_1080x1080.png"
+  },
+  "organization": "OPUS Academy",
+  "tagline":      "Socio académico de Volutracer OPUS",
+  "location":     "Guayaquil, Ecuador"
+}
