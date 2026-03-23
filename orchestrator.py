@@ -159,6 +159,31 @@ def run_timeline_analyst(meta: dict, frames_index: dict) -> dict:
     log("Timeline", f"{timeline_raw['total_segments']} segmentos generados")
     return timeline_raw
 
+def manual_review_checkpoint(json_path: str, stage: str) -> bool:
+    print(f"\n{'='*50}")
+    print(f"  CHECKPOINT DE REVISION — {stage}")
+    print(f"{'='*50}")
+    print(f"  Archivo: {json_path}")
+    print(f"\n  Opciones:")
+    print(f"  [A] Aprobar y continuar")
+    print(f"  [E] Editar el archivo manualmente y luego continuar")
+    print(f"  [X] Cancelar pipeline")
+
+    while True:
+        choice = input("\n  Tu elección (A/E/X): ").strip().upper()
+        if choice == "A":
+            log("Checkpoint", f"{stage} aprobado")
+            return True
+        elif choice == "E":
+            print(f"\n  Abre {json_path} en VS Code, edita y guarda.")
+            input("  Presiona Enter cuando hayas terminado...")
+            log("Checkpoint", f"{stage} editado manualmente")
+            return True
+        elif choice == "X":
+            log("Checkpoint", "Pipeline cancelado por el usuario")
+            return False
+        else:
+            print("  Opción no válida. Escribe A, E o X.")
 
 def run_agent(script: str, meta: dict) -> dict:
     """Corre un agente genérico que lee meta.json y escribe su JSON."""
@@ -214,9 +239,28 @@ def run_pipeline(meta_path: str = "meta.json"):
 
     # 4. Correr agentes en secuencia
     try:
-        timeline_raw      = run_timeline_analyst(meta, frames_index)
-        # Los siguientes agentes se activarán cuando estén construidos
-        # procedure_steps = run_agent("procedure_analyst", meta)
+        timeline_raw    = run_timeline_analyst(meta, frames_index)
+
+        # Checkpoint manual
+        approved = manual_review_checkpoint(
+            str(JSON_DIR / "timeline_raw.json"),
+            "Timeline Analysis"
+        )
+        if not approved:
+            print("Pipeline cancelado.")
+            return
+
+        procedure_steps = run_agent("procedure_analyst", meta)
+
+        # Checkpoint manual
+        approved = manual_review_checkpoint(
+            str(JSON_DIR / "procedure_steps.json"),
+            "Procedure Steps"
+        )
+        if not approved:
+            print("Pipeline cancelado.")
+            return
+
         # captures_plan   = run_agent("capture_selector",  meta)
         # chapter_content = run_agent("role_writer",       meta)
         # qa_report       = run_agent("qa_agent",          meta)
@@ -232,6 +276,7 @@ def run_pipeline(meta_path: str = "meta.json"):
     print("\n" + "="*50)
     print(f"  COMPLETADO en {elapsed} segundos")
     print(f"  Segmentos generados: {timeline_raw['total_segments']}")
+    print(f"  Pasos de procedimiento: {procedure_steps['procedure']['total_steps']}")
     print(f"  Idioma: {meta['language_output']}")
     print(f"  Proyecto: {meta['project_name']}")
     print("="*50 + "\n")

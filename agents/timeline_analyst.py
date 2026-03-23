@@ -23,7 +23,7 @@ def describe_frame(image_path: str, software_name: str, language: str = "es") ->
 
     def ask(question: str) -> str:
         response = client.chat.completions.create(
-            model="moondream:latest",
+            model="llava:latest",
             messages=[
                 {
                     "role": "user",
@@ -44,22 +44,125 @@ def describe_frame(image_path: str, software_name: str, language: str = "es") ->
             temperature=0,
             max_tokens=200
         )
-        return response.choices[0].message.content.strip()
+        text = response.choices[0].message.content.strip()
+        # Filtrar caracteres no latinos/ASCII básico
+        cleaned = "".join(c for c in text if ord(c) < 1000 or c in "áéíóúüñÁÉÍÓÚÜÑ¿¡")
+        return cleaned.strip() or "No determinado"
 
-    screen   = ask(f"What screen or window is shown? Answer {lang_instruction} in one sentence.")
-    elements = ask(f"List all buttons, fields, menus and labels visible. Answer {lang_instruction}.")
-    cursor   = ask(f"Where is the mouse cursor? Describe its position {lang_instruction}.")
-    ui_state = ask(f"What is the user doing or about to do? Answer {lang_instruction}.")
+    screen   = ask(f"This is {software_name}. What screen is this? Answer {lang_instruction}, max 10 words.")
+    elements = ask(f"List the visible buttons and input fields. Answer {lang_instruction}, max 30 words.")
+    cursor   = ask(f"What UI element is the cursor pointing at? Answer {lang_instruction}, max 10 words.")
+    action   = ask(f"What action is happening? Answer {lang_instruction}, max 15 words, start with a verb.")
 
     return {
-        "screen_name": screen,
-        "visible_text": elements,
+        "screen_name":     screen,
+        "visible_text":    elements,
         "cursor_position": cursor,
-        "ui_state": ui_state
+        "ui_state":        action
     }
 
+def validate_visual_analysis(frames: list, meta: dict) -> list:
+    """
+    Usa qwen3 para validar y filtrar alucinaciones en las
+    descripciones visuales de llava, comparando consistencia
+    entre frames consecutivos.
+    """
+    software = meta.get("software_name", "software")
+    language = meta.get("language", "es")
+    lang_instruction = "en español" if language == "es" else "in English"
 
-def build_timeline(frames: list, meta: dict) -> list:
+    analyses = []
+    for f in frames:
+        analyses.append({
+            "frame_id": f["frame_id"],
+            "timestamp": f["timestamp_label"],
+            "analysis": f["visual_analysis"]
+        })
+
+    system_prompt = f"""Eres un validador experto de descripciones visuales de interfaces de software.
+Tu tarea es revisar descripciones de frames consecutivos de un tutorial de {software} y:
+1. Eliminar elementos de UI que probablemente sean alucinaciones (aparecen en un solo frame sin consistencia)
+2. Corregir nombres de elementos que no tienen sentido en el contexto del software
+3. Mantener solo elementos que sean consistentes o claramente visibles
+Responde ÚNICAMENTE con JSON válido {lang_instruction}, sin texto adicional."""
+
+    user_prompt = f"""Valida estas descripciones visuales de {len(frames)} frames de {software}.
+
+{json.dumps(analyses, indent=2, ensure_ascii=False)}
+
+Para cada frame, devuelve una versión limpia y validada. Elimina elementos inconsistentes o que parezcan alucinaciones.
+
+Responde SOLO con este JSON:
+{{
+    "validated_frames": [
+        {{
+            "frame_id": "frame_0001",
+            "screen_name": "nombre validado de la pantalla",
+            "visible_text": ["solo textos realmente visibles"],
+            "cursor_position": "posición validada",
+            "ui_state": "estado validado",
+            "confidence": "high/medium/low"
+        }}
+    ],
+    "detected_software_language": "en/es/pt/fr",
+    "common_ui_elements": ["elementos que aparecen en múltiples frames"]
+}}"""
+
+    response = client.chat.completions.create(
+        model="qwen3:14b",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt}
+        ],
+        temperature=0,
+        max_tokens=4096,
+        extra_body={"think": False}
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    if "<think>" in raw:
+        raw = raw.split("</think>")[-1].strip()
+
+    if "```" in raw:
+        parts = raw.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                raw = part[4:].strip()
+                break
+            elif part.startswith("{"):
+                raw = part
+                break
+
+    start = raw.find("{")
+    end   = raw.rfind("}") + 1
+    if start != -1 and end > start:
+        raw = raw[start:end]
+
+    validation = json.loads(raw)
+
+    # Actualizar frames con análisis validado
+    validated_map = {
+        v["frame_id"]: v
+        for v in validation["validated_frames"]
+    }
+
+    for frame in frames:
+        if frame["frame_id"] in validated_map:
+            frame["visual_analysis"] = validated_map[frame["frame_id"]]
+            frame["confidence"] = validated_map[frame["frame_id"]].get("confidence", "medium")
+
+    # Guardar idioma detectado para el orquestador
+    detected_lang = validation.get("detected_software_language", "en")
+    meta["language_ui"] = detected_lang
+
+    print(f"  Idioma del software detectado: {detected_lang}")
+    print(f"  Elementos comunes: {', '.join(validation.get('common_ui_elements', []))}")
+
+    return frames
+
+def build_timeline(frames: list, meta: dict) -> dict:
     software_name = meta.get("software_name", "software")
     language = meta.get("language", "es")
     language_instruction = "en español" if language == "es" else "in English"
@@ -75,13 +178,13 @@ Frame {i+1}:
 
     system_prompt = f"""Eres un analista experto en documentación de procedimientos de software.
 Tu tarea es analizar frames de un tutorial de {software_name} y construir una timeline detallada.
-Responde ÚNICAMENTE con JSON válido {language_instruction}, sin texto adicional, sin markdown."""
+Responde ÚNICAMENTE con JSON válido {language_instruction}, sin texto adicional, sin markdown, sin explicaciones."""
 
     user_prompt = f"""Analiza estos {len(frames)} frames del tutorial y construye una timeline detallada.
 
 {frames_description}
 
-Genera un JSON con esta estructura exacta:
+Responde SOLO con este JSON, sin ningún texto antes ni después:
 {{
     "segments": [
         {{
@@ -90,26 +193,20 @@ Genera un JSON con esta estructura exacta:
             "end_seconds": 2,
             "frame_ref": "frame_0001",
             "software_name": "{software_name}",
-            "screen_name": "nombre de la pantalla",
-            "action": "descripción detallada de la acción que ocurre",
-            "visual_elements": ["elementos visibles relevantes"],
-            "text_visible_on_screen": ["textos importantes visibles"],
-            "user_action": "acción específica del usuario (clic, escritura, etc)",
-            "user_intent": "intención o objetivo del usuario en este momento",
+            "screen_name": "nombre exacto de la pantalla",
+            "action": "descripción detallada de la acción",
+            "visual_elements": ["elementos visibles"],
+            "text_visible_on_screen": ["textos visibles"],
+            "user_action": "acción específica del usuario",
+            "user_intent": "intención del usuario",
             "cursor_position": "posición del cursor",
-            "ui_state_before": "estado de la interfaz antes de la acción",
-            "ui_state_after": "estado de la interfaz después de la acción",
+            "ui_state_before": "estado antes",
+            "ui_state_after": "estado después",
             "is_transition": false,
-            "navigation_menu": ["opciones del menú si son visibles"]
+            "navigation_menu": ["opciones del menú"]
         }}
     ]
-}}
-
-Importante:
-- Agrupa frames consecutivos si muestran la misma acción
-- Marca is_transition como true si hay cambio de pantalla
-- Sé específico con los textos visibles en pantalla
-- Describe la intención del usuario con claridad"""
+}}"""
 
     response = client.chat.completions.create(
         model="qwen3:14b",
@@ -118,26 +215,40 @@ Importante:
             {"role": "user",   "content": user_prompt}
         ],
         temperature=0,
-        max_tokens=4096
+        max_tokens=4096,
+        extra_body={"think": False}
     )
 
     raw = response.choices[0].message.content.strip()
 
+    # Limpiar thinking tags
     if "<think>" in raw:
         raw = raw.split("</think>")[-1].strip()
 
+    # Limpiar markdown fences
     if "```" in raw:
         parts = raw.split("```")
         for part in parts:
+            part = part.strip()
             if part.startswith("json"):
                 raw = part[4:].strip()
                 break
-            elif part.strip().startswith("{"):
-                raw = part.strip()
+            elif part.startswith("{"):
+                raw = part
                 break
 
-    return json.loads(raw)
+    # Extraer JSON si hay texto antes o después
+    start = raw.find("{")
+    end   = raw.rfind("}") + 1
+    if start != -1 and end > start:
+        raw = raw[start:end]
 
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"Error parseando JSON: {e}")
+        print(f"Raw response: {raw[:500]}")
+        raise
 
 def run(meta: dict, frames_index_override: dict = None) -> dict:
     if frames_index_override:
@@ -151,7 +262,7 @@ def run(meta: dict, frames_index_override: dict = None) -> dict:
     software_name = meta.get("software_name", "software")
     language = meta.get("language", "es")
 
-    print(f"Analizando {len(frames)} frames con moondream...")
+    print(f"Analizando {len(frames)} frames con llava...")
 
     for i, frame in enumerate(frames):
         print(f"  Frame {i+1}/{len(frames)}: {frame['frame_id']}")
@@ -161,7 +272,9 @@ def run(meta: dict, frames_index_override: dict = None) -> dict:
             language
         )
 
-    print("Construyendo timeline con qwen3:14b...")
+    # NUEVO — validación automática
+    print("Validando análisis visual con qwen3...")
+    frames = validate_visual_analysis(frames, meta)
 
     timeline_data = build_timeline(frames, meta)
 
